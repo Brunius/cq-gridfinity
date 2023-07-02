@@ -58,3 +58,9 @@ class PlateStyle(Enum):
 	MAGNET_ONLY	= 1
 	SCREW_ONLY	= 2
 	MAGNET_SCREW= 3
+
+class CrossSection(Enum):
+	QUADRANT	= 0
+	HALF		= 1
+	HALFY		= 1
+	HALFX		= 2
