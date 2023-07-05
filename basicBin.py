@@ -1,5 +1,6 @@
 import cadquery as cq
-from math import tan
+from math import sin, cos, tan, asin, acos, atan
+from math import floor, ceil
 
 from standards import *
 
@@ -132,6 +133,8 @@ def binSolid(
 
 		topStyle	= TopStyle.STACKING,
 		bottomStyle	= BottomStyle.MAGNET_ONLY,
+		bottomDivX	= None,
+		bottomDivY	= None,
 		):
 
 	binWidth	= binX*gridUnit-tolerance*2
@@ -143,11 +146,7 @@ def binSolid(
 				.edges("|Z")
 				.fillet(extFilletRadius)
 	)
-			
-			
-	
 
-	
 	# bottom of bin
 	interlockWidth = gridUnit-tolerance*2-insideTop*2
 	magnetLocation = magnetCCDist
@@ -170,7 +169,7 @@ def binSolid(
 		.edges(">>X or <<X or >>X[0] or >>X[-1] or >>Y or <<Y")
 		.chamfer(insideTop-0.01)
 	)
-	
+
 	unionObject = None
 	match bottomStyle:
 		case BottomStyle.BLANK:
@@ -214,18 +213,73 @@ def binSolid(
 			)
 
 	if (unionObject is not None):
+		#check if the requested subdivisions will actually work or not
+		printableThreshold = wallThickness*4
+		if (bottomDivX is not None):
+			bottomDivX_interlockWidth = gridUnit/bottomDivX-insideTop*2 #calculate width of interlock vertical section
+			if (bottomDivX_interlockWidth < printableThreshold):
+				raise Exception("bottomDivX of {:.2f} is too big - would result in hard to print features of {:.2f}mm".format(bottomDivX, bottomDivX_interlockWidth))
+		if (bottomDivY is not None):
+			bottomDivY_interlockWidth = gridUnit/bottomDivY-insideTop*2 #calculate depth of interlock vertical section
+			if (bottomDivY_interlockWidth < printableThreshold):
+				raise Exception("bottomDivY of {:.2f} is too big - would result in hard to print features of {:.2f}mm".format(bottomDivY, bottomDivY_interlockWidth))
+		
+		#if unspecified, automatically calculate subdivisions
+		if (bottomDivX is None):
+			if (binX%1):
+				bottomDivX = 1/(binX%1)
+			else:
+				bottomDivX = 1
+		if (bottomDivY is None):
+			if (binY%1):
+				bottomDivY = 1/(binY%1)
+			else:
+				bottomDivY = 1
+		if (bottomDivX != 1 or bottomDivY != 1):
+			#break into parts by intersecting
+			#create single unit
+			offsetObject = (
+				unionObject
+				.intersect(
+					unionObject
+					.translate((
+						gridUnit*(1-1/bottomDivX),
+						gridUnit*(1-1/bottomDivY),
+						0
+					))
+				)
+			)
+			#may have weird edges - round them off
+			offsetObject = (
+				offsetObject
+				.intersect(
+					offsetObject
+					.mirror("YZ")
+					.translate((
+						gridUnit*(1-1/bottomDivX),
+						0,
+						0
+					))
+				)
+			)
+			unionObject = (
+				offsetObject
+				.rotate((0,0,0),(0,0,5),180)
+			)
+
+		#tile across bottom of bin
 		xOffset = (binX-1 % 2) * -gridUnit/2
 		yOffset = (binY-1 % 2) * -gridUnit/2
 		
 		unionList = []
 
-		for x in range(binX):
-			for y in range(binY):
+		for x in range(int(binX*bottomDivX)): #binX
+			for y in range(int(binY*bottomDivY)): #binY
 				unionList.append(
 					unionObject
 					.translate((
-						xOffset+x*gridUnit,
-						yOffset+y*gridUnit,
+						xOffset+x*gridUnit/bottomDivX,
+						yOffset+y*gridUnit/bottomDivY,
 						0
 					))
 				)
@@ -235,7 +289,7 @@ def binSolid(
 				.add(item)
 			)
 		bin = bin.combine()
-	
+		return bin
 	# top of bin
 	match topStyle:
 		case TopStyle.NONE_LOW:
@@ -415,9 +469,11 @@ def binCompartments(
 
 		topStyle	= TopStyle.STACKING,
 		bottomStyle	= BottomStyle.MAGNET_ONLY,
+		bottomDivX	= 1,
+		bottomDivY	= 1,
 		):
 
-	returnBin = binSolid(binX, binY, binZ, topStyle, bottomStyle)
+	returnBin = binSolid(binX, binY, binZ, topStyle, bottomStyle, bottomDivX, bottomDivY)
 
 	widthAvail	= (
 		binX*gridUnit-tolerance*2	#base bin width
@@ -488,6 +544,8 @@ def binClearWindow(
 
 		topStyle	= TopStyle.STACKING,
 		bottomStyle	= BottomStyle.MAGNET_ONLY,
+		bottomDivX	= 1,
+		bottomDivY	= 1,
 
 		clearSide	= "X",
 		clearDepth	= 1,
@@ -510,7 +568,7 @@ def binClearWindow(
 	#------------------------------------------
 	#  Almost all the same as binCompartments
 	#------------------------------------------
-	returnBin = binSolid(binX, binY, binZ, topStyle, bottomStyle)
+	returnBin = binSolid(binX, binY, binZ, topStyle, bottomStyle, bottomDivX, bottomDivY)
 
 	widthAvail	= (
 		binX*gridUnit-tolerance*2	#base bin width
@@ -614,8 +672,10 @@ def trayClearWindow(
 
 		topStyle	= TopStyle.INT_DIV_MAG,
 		bottomStyle	= BottomStyle.MAGNET_ONLY,
+		bottomDivX	= 1,
+		bottomDivY	= 1,
 		):
-	returnTray		= binSolid(trayX, trayY, trayZ, topStyle, bottomStyle)
+	returnTray		= binSolid(trayX, trayY, trayZ, topStyle, bottomStyle, bottomDivX, bottomDivY)
 	clearSectionX	= min(insertX*0.8, magnetCCDist)
 	clearSectionY	= min(insertY*0.8, magnetCCDist)
 	magClearance	= magnetDiameter/2 + wallThickness
@@ -690,6 +750,155 @@ def crossSection(
 		)
 	return item
 
+def trayAngleAdaptor(
+		topX: float	= 1,
+		trayY: float= 1,
+
+		angleDeg	= None,
+		binHeight	= 3,
+
+		topStyle	= TopStyle.INT_DIV_MAG,
+		bottomStyle	= BottomStyle.MAGNET_ONLY,
+		bottomDivX	= 1,
+		bottomDivY	= 1,
+		):
+	angleRad = 0
+	if (angleDeg is None):
+		angleRad = atan(binHeight*heightUnit/gridUnit)
+		angleDeg = angleRad*180/3.14
+	else:
+		angleRad = angleDeg*3.14/180
+	#check angleDeg isn't going to be impossible to calculate
+	if (angleDeg > 80):
+		raise Exception("Angle too high - could not calculate")
+	if (angleDeg < 0.75):
+		raise Exception("Angle too low - could not calculate")
+	trayXGrid	= gridUnit/cos(angleRad)
+	topFaceX	= cos(angleRad)*gridUnit
+	sideFaceX	= trayXGrid - topFaceX
+
+	roundEdgeFlag = True
+	bottomX = floor((trayXGrid*topX)/(gridUnit))
+	#if cut would be mid-face, add one to the tray size
+	if (((gridUnit*bottomX)%trayXGrid) < topFaceX):
+		bottomX = bottomX + 1/bottomDivX
+		roundEdgeFlag = False
+	bottomTray	= binSolid(bottomX, trayY, 1, TopStyle.NONE_LOW, bottomStyle, bottomDivX, bottomDivY)
+
+	topPlate	= binSolid(1, trayY, 1, topStyle, BottomStyle.NONE)
+	topPlateRotationEdge = heightUnit-(insideTop+tolerance)/2
+	topPlateX	= gridUnit*(bottomX/2-0.5)
+	topPlateZ	= -outsideDepth+outsideTop/2+tolerance
+	#cutter for deleting sections below 0Z
+	negZBox		= (
+		cq.Workplane("XY")
+		.box(gridUnit*30, gridUnit*30, gridUnit*3)
+		.translate((0,0,-gridUnit*1.5))
+	)
+	#extrude below topplate to meet XY plane
+	topPlate	= (
+		roundedRect(
+			gridUnit-tolerance*2,
+			trayY*gridUnit-tolerance*2,
+			extFilletRadius,
+			topPlate
+			.faces("<Z")
+			.workplane()
+		)
+		.extrude(sin(angleRad)*trayXGrid)
+	)
+	#cutter for trimming to size of tray
+	traySizeCutter = (
+		cq.Workplane("XY", (0,0,0))
+		.rect(bottomX*gridUnit-tolerance*2, trayY*gridUnit-tolerance*2)
+		.extrude(50)
+		.edges("|Z")
+		.fillet(extFilletRadius)
+	)
+	#create topPlateCutter to clean up geometry on bottom faces
+	topPlateCutter = (
+		binSolid(1, trayY, 1, TopStyle.NONE, BottomStyle.NONE)
+		.cut(
+			topPlate
+		)
+		.faces("<Z[1]")
+		.workplane(0, True)
+		.rect(gridUnit, gridUnit*trayY)
+		.extrude(bottomTray.largestDimension())
+	)
+	#rotate and translate topPlate and topPlateCutter
+	topPlate			= (
+		topPlate
+		.rotate((gridUnit/2-tolerance, -5, topPlateRotationEdge), (gridUnit/2-tolerance, 5, topPlateRotationEdge), angleDeg)
+		.translate((topPlateX,0,topPlateZ))
+		.cut(negZBox)
+		.intersect(traySizeCutter)
+	)
+	topPlateCutter		= (
+		topPlateCutter
+		.rotate((gridUnit/2-tolerance, -5, topPlateRotationEdge), (gridUnit/2-tolerance, 5, topPlateRotationEdge), angleDeg)
+		.translate((topPlateX,0,topPlateZ))
+	)
+	#create bottomTrayCutter to clean up geometry on bottom faces
+	bottomTrayCutter	= (
+		cq.Workplane("XY")
+		.box(gridUnit*bottomX, gridUnit*trayY, insideDepth+heightUnit)
+		.translate((0,0,-(insideDepth+heightUnit)/2))
+		.cut(bottomTray)
+	)
+	#tile in X
+	topConsol = cq.Workplane("XY")
+	for x in range(topX):
+		topPlateCutter = (
+			topPlateCutter
+			.add(
+				topPlateCutter
+				.translate((
+					-x*trayXGrid,
+					0,
+					0
+				))
+			)
+		)
+		topConsol = (
+			topConsol
+			.add(
+				topPlate
+				.translate((
+					-x*trayXGrid,
+					0,
+					0
+				))
+			)
+		)
+	topPlateCutter	= topPlateCutter.combine()
+	topPlate		= (
+		topConsol
+		.combine()
+		.intersect(traySizeCutter)
+	)
+	roundEdgeFlag = True
+	if roundEdgeFlag:
+		try:
+			topPlate = (
+				topPlate
+				.edges("<X")
+				.edges(">Z")
+				.fillet(extFilletRadius)
+			)
+		except:
+			topPlate = (
+				topPlate
+			)
+	#smoosh it all together
+	bottomTray = (
+		bottomTray
+		.union(topPlate)
+		.cut(topPlateCutter)
+		.cut(bottomTrayCutter)
+	)
+	return bottomTray
+
 centreBin = binCompartments(
 		binX		= 1,
 		binY		= 1,
@@ -703,26 +912,36 @@ centreBin = binCompartments(
 		tabAngle	= 60,
 
 		topStyle	= TopStyle.STACKING,	
-		bottomStyle	= BottomStyle.MAGNET_ONLY,
+		bottomStyle	= BottomStyle.BLANK,
+		bottomDivX	= 1,
+		bottomDivY	= 1,
 	)
 del centreBin
-flagCrossSection = False
-if 'centreBin' in locals() and flagCrossSection:
-	#cut for cross section
-	centreBin = crossSection(
-		centreBin,
-		-magnetCCDist/2,
-		-magnetCCDist/2,
-		CrossSection.HALF
-		)
+c1 = False
+c2 = False
+if 'centreBin' in locals():
+	if (type(centreBin) is type([0, 0])):
+		c1 = centreBin[0]
+		c2 = centreBin[1]
+	flagCrossSection = False
+	if flagCrossSection:
+		#cut for cross section
+		centreBin = crossSection(
+			centreBin,
+			-magnetCCDist/2,
+			-magnetCCDist/2,
+			CrossSection.HALF
+			)
 
 flagTestSolid		= False
 flagTestBin			= False
-flagTestClearWindow	= True
+flagTestClearWindow	= False
+flagTestAngle		= False
 flagTest			= (
 	flagTestSolid or
 	flagTestBin or
-	flagTestClearWindow
+	flagTestClearWindow or
+	flagTestAngle
 )
 if flagTest:
 	testTray = binSolid(
@@ -731,11 +950,14 @@ if flagTest:
 		binZ	= 1,
 		topStyle=TopStyle.INT_DIV_MAG
 		).translate((0,0,-heightUnit))
+	del testTray
 	if flagTestSolid:
-		test_1x2x3		= binSolid(1,2,3, TopStyle.STACKING, BottomStyle.MAGNET_SCREW).translate((gridUnit, gridUnit*0.5, 0))
-		test_1x1x6		= binSolid(1,1,6, TopStyle.STACKING, BottomStyle.NONE).translate((0, gridUnit, 0))
+		test_1x2x3		= binSolid(1,2,3, TopStyle.INT_DIV_MAG, BottomStyle.MAGNET_SCREW).translate((gridUnit, gridUnit*0.5, 0))
+		test_1x1x6		= binSolid(1,1,6, TopStyle.INT_DIV, BottomStyle.NONE).translate((0, gridUnit, 0))
 		test_1x1x1H		= binSolid(1,1,1, TopStyle.NONE, BottomStyle.SCREW_ONLY).translate((-gridUnit, gridUnit, 0))
-		test_1x1x1L		= binSolid(1,1,1, TopStyle.NONE_LOW, BottomStyle.MAGNET_ONLY).translate((-gridUnit, 0, 0))
+		test_1x1x1L		= binSolid(1,1,1, TopStyle.NONE_LOW, BottomStyle.MAGNET_ONLY, 2, 2).translate((-gridUnit, 0, 0))
+		test_15x1x1B	= binSolid(1.5,1,1, TopStyle.STACKING, BottomStyle.BLANK).translate((-gridUnit*0.75, -gridUnit, 0))
+		test_075x1x1B	= binSolid(0.75,1,1, TopStyle.STACKING, BottomStyle.BLANK).translate((gridUnit*0.375, -gridUnit, 0))
 	if flagTestBin:
 		test_1x1x3_2D	= binCompartments(1, 1, 3, 2).translate((gridUnit, 0, 0))
 		test_1x1x6_2D	= binCompartments(1, 1, 6, 1, 2, tabStyle=TabStyle.NONE).translate((gridUnit*-1, 0, 0))
@@ -746,12 +968,28 @@ if flagTest:
 		test_2x1x1_ClrT	= trayClearWindow(2, 1, 1).translate((gridUnit/2, gridUnit, 0))
 		test_1x2x3_ClrY = binClearWindow(1, 2, 3, 1, 2, clearSide="Y").translate((-gridUnit, gridUnit/2, 0))
 		test_2x1x3_ClrX = binClearWindow(2, 1, 3, 3, 1, 1).translate((-gridUnit*0.5, -gridUnit, 0))
+	if flagTestAngle:
+		test_1x1x3_Angle= trayAngleAdaptor().translate((gridUnit,-gridUnit,0))
+		test_2x2x6_Angle= trayAngleAdaptor(2, 2, binHeight=6, bottomDivX=2, bottomDivY=2).translate((0, gridUnit*0.5, 0))
+		test_1x1x9_Angle= trayAngleAdaptor(1, 1, binHeight=9).translate((-gridUnit, -gridUnit, 0))
+		test_1x1x6_Angle= trayAngleAdaptor(1, 1, binHeight=6).translate((0, -gridUnit, 0))
 
+largeBin	= binSolid(binY=0.5, binZ=3, bottomStyle=BottomStyle.BLANK, binX=1.25)
+smallBin	= binSolid(binY=0.5, binZ=3, bottomStyle=BottomStyle.BLANK, binX=0.75).translate((-0.25*gridUnit, -0.5*gridUnit, 0))
+newItem = (
+	cq.Workplane("XY")
+	.add(largeBin)
+	.add(smallBin)
+	.combine()
+	.rotate((5, -gridUnit, 0), (-5, -gridUnit, 0), -90)
+)
+del largeBin
+del smallBin
 """
 bZ = 3
-b1 = binCompartments(4,1,bZ,4,1,3).translate((-gridUnit/2,-gridUnit, 0))
+b1 = binCompartments(4,1,bZ,4,1,3,bottomDivX=2, bottomDivY=2).translate((-gridUnit/2,-gridUnit, 0))
 b2 = b1.translate((0,-gridUnit,0))
-b3 = binCompartments(4,2,bZ,4,2,3).translate((-gridUnit/2,-gridUnit*3.5, 0))
-b4 = binCompartments(2,2,bZ,2,2,3).translate((gridUnit/2, -gridUnit*5.5, 0))
+b3 = binCompartments(4,2,bZ,4,2,3,bottomDivX=2, bottomDivY=2).translate((-gridUnit/2,-gridUnit*3.5, 0))
+b4 = binCompartments(2,2,bZ,2,2,3,bottomDivX=2, bottomDivY=2).translate((gridUnit/2, -gridUnit*5.5, 0))
 b5 = b4.translate((-gridUnit*2, 0, 0))
 #"""
