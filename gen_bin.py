@@ -3,128 +3,7 @@ from math import sin, cos, tan, asin, acos, atan
 from math import floor, ceil
 
 from standards import *
-
-def roundedRect(
-		xLength		= 10,
-		yLength		= 10,
-		radius		= 2,
-		inObject	= cq.Workplane("XY"),
-		):
-	xL = (xLength/2 - radius)
-	yL = (yLength/2 - radius)
-	returnVal = (
-		inObject
-		.moveTo(xL, yLength/2)
-		.radiusArc((xLength/2, yL), radius)
-		.lineTo(xLength/2, -yL)
-		.radiusArc((xL, -yLength/2), radius)
-		.lineTo(-xL, -yLength/2)
-		.radiusArc((-xLength/2, -yL), radius)
-		.lineTo(-xLength/2, yL)
-		.radiusArc((-xL, yLength/2), radius)
-		.lineTo(xL, yLength/2)
-		.close()
-	)
-
-	return returnVal
-
-def baseplate (
-		plateX		= 3,
-		plateY		= 3,
-		plateZ		= None,
-
-		plateStyle	= PlateStyle.MAGNET_ONLY,
-
-		roundTop	= False,
-		):
-	if (plateZ is None):
-		plateZ = outsideDepth
-		if (plateStyle is not PlateStyle.BARE):
-			plateZ += magnetDepth+wallThickness
-	singleUnit = (
-		cq.Workplane("XY")
-		.rect(gridUnit, gridUnit)
-		.extrude(-plateZ)
-	)
-	surfaceXY	= gridUnit - tolerance*2
-	surfaceRad	= extFilletRadius
-	middleXY	= surfaceXY - outsideTop*2
-	middleRad	= surfaceRad - outsideTop
-	bottomXY	= middleXY - outsideBottom*2-0.1
-	bottomRad	= middleRad - outsideBottom
-
-	surfaceProfile	= roundedRect(surfaceXY, surfaceXY, surfaceRad, singleUnit)
-	midTopProfile	= roundedRect(middleXY, middleXY, middleRad, surfaceProfile.workplane(-outsideTop))
-	midBotProfile	= roundedRect(middleXY, middleXY, middleRad, midTopProfile.workplane(-outsideMid))
-	bottomProfile	= roundedRect(bottomXY, bottomXY, bottomRad, midBotProfile.workplane(-outsideBottom))
-	singleUnit = (
-		bottomProfile
-		.loft(True, "s")
-	)
-	if roundTop:
-		singleUnit = (
-			singleUnit
-			.faces(">Z")
-			.rect(plateX*gridUnit*2, plateY*gridUnit*2)
-			.extrude(-outsideTop/2, "s")
-			.edges(">Z except (>X or <X or >Y or <Y)")
-			.fillet(outsideTop/4)
-		)
-	match plateStyle:
-		case PlateStyle.MAGNET_ONLY:
-			singleUnit = (
-				singleUnit
-				.faces(">Z")
-				.rect(magnetCCDist, magnetCCDist, forConstruction=True)
-				.vertices()
-				.circle(magnetDiameter/2)
-				.extrude(-magnetDepth-outsideDepth, "s")
-			)
-		case PlateStyle.SCREW_ONLY:
-			singleUnit = (
-				singleUnit
-				.faces(">Z")
-				.rect(magnetCCDist, magnetCCDist, forConstruction=True)
-				.vertices()
-				.circle(screwDiameter/2)
-				.extrude(-screwDepth-outsideDepth, "s")
-			)
-		case PlateStyle.MAGNET_SCREW:
-			singleUnit = (
-				singleUnit
-				.faces(">Z")
-				.rect(magnetCCDist, magnetCCDist, forConstruction=True)
-				.vertices()
-				.circle(magnetDiameter/2)
-				.extrude(-magnetDepth-outsideDepth, "s")
-				.faces(">Z")
-				.rect(magnetCCDist, magnetCCDist, forConstruction=True)
-				.vertices()
-				.circle(screwDiameter/2)
-				.extrude(-screwDepth-outsideDepth, "s")
-			)
-	singleUnit = singleUnit.translate((0,0,-tolerance))
-
-	returnPlate = cq.Workplane("XY") #blank
-
-	unionList = []
-	for x in range(ceil(plateX)):
-		for y in range(ceil(plateY)):
-			unionList.append(
-				singleUnit.translate((
-					(x - (plateX/2 - 0.5))*gridUnit,
-					(y - (plateY/2 - 0.5))*gridUnit,
-					0
-				))
-			)
-	for item in unionList:
-		returnPlate = (
-			returnPlate
-			.add(item)
-		)
-	returnPlate = returnPlate.combine()
-	
-	return returnPlate
+from gen_baseplate import *
 
 def binSolid(
 		binX: float	= 1,
@@ -133,9 +12,19 @@ def binSolid(
 
 		topStyle	= TopStyle.STACKING,
 		bottomStyle	= BottomStyle.MAGNET_ONLY,
-		bottomDivX	= None,
-		bottomDivY	= None,
+		bottomDivX	= 1,
+		bottomDivY	= 1,
 		):
+	if (binX <= 0):
+		raise Exception("binX cannot be less than 0")
+	if (binY <= 0):
+		raise Exception("binY cannot be less than 0")
+	if (binZ <= 0):
+		raise Exception("binZ cannot be less than 0")
+	if (bottomDivX <=0):
+		raise Exception("bottomDivX cannot be less than 0")
+	if (bottomDivY <=0):
+		raise Exception("bottomDivY cannot be less than 0")
 
 	binWidth	= binX*gridUnit-tolerance*2
 	binDepth	= binY*gridUnit-tolerance*2
@@ -489,7 +378,10 @@ def binCompartments(
 		bottomDivX	= 1,
 		bottomDivY	= 1,
 		):
-
+	if (divX < 1):
+		raise Exception("divX cannot be less than 1")
+	if (divY < 1):
+		raise Exception("divY cannot be less than 1")
 	returnBin = binSolid(binX, binY, binZ, topStyle, bottomStyle, bottomDivX, bottomDivY)
 
 	widthAvail	= (
@@ -732,41 +624,6 @@ def trayClearWindow(
 		returnTray = returnTray.cut(item)
 	return returnTray
 
-def crossSection(
-		item			= None,
-		sectionX: float	= 0,
-		sectionY: float	= 0,
-		type			= CrossSection.QUADRANT,
-	):
-	maxDist = item.largestDimension()
-	sectionCutter = (
-		cq.Workplane("XY")
-		.box(maxDist*3, maxDist*3, maxDist*3, False)
-		.translate((0,0,-maxDist*1.5))
-	)
-	if (type == CrossSection.HALF
-     or type == CrossSection.HALFY):
-		sectionCutter = (
-			sectionCutter
-			.union(
-				sectionCutter
-				.rotate((0,0,0), (0,0,5), -90)
-			)
-		)
-	elif (type == CrossSection.HALFX):
-		sectionCutter = (
-			sectionCutter
-			.union(
-				sectionCutter
-				.rotate((0,0,0), (0,0,5), 90)
-			)
-		)
-	item = item.cut(
-		sectionCutter
-		.translate((sectionX, sectionY, 0))
-		)
-	return item
-
 def trayAngleAdaptor(
 		topX: float	= 1,
 		trayY: float= 1,
@@ -917,93 +774,3 @@ def trayAngleAdaptor(
 		.cut(topPlateCutter)
 	)
 	return bottomTray
-	
-
-centreBin = binCompartments(
-		binX		= 1,
-		binY		= 1,
-		binZ		= 6,
-
-		divX		= 1,
-		divY		= 1,
-		scoop		= 2,
-
-		tabStyle	= TabStyle.FULL,
-		tabAngle	= 60,
-
-		topStyle	= TopStyle.STACKING,	
-		bottomStyle	= BottomStyle.BLANK,
-		bottomDivX	= 1,
-		bottomDivY	= 1,
-	)
-del centreBin
-c1 = False
-c2 = False
-if 'centreBin' in locals():
-	if (type(centreBin) is type([0, 0])):
-		c1 = centreBin[0]
-		c2 = centreBin[1]
-	flagCrossSection = False
-	if flagCrossSection:
-		#cut for cross section
-		centreBin = crossSection(
-			centreBin,
-			-magnetCCDist/2,
-			-magnetCCDist/2,
-			CrossSection.HALF
-			)
-
-flagTestSolid		= False
-flagTestSubDiv		= False
-flagTestBin			= False
-flagTestClearWindow	= False
-flagTestAngle		= False
-flagTest			= (
-	flagTestSolid or
-	flagTestSubDiv or
-	flagTestBin or
-	flagTestClearWindow or
-	flagTestAngle
-)
-if flagTest:
-	testTray = binSolid(
-		binX	= 3, 
-		binY	= 3,
-		binZ	= 1,
-		topStyle=TopStyle.INT_DIV_MAG
-		).translate((0,0,-heightUnit))
-	del testTray
-	if flagTestSolid:
-		test_1x2x3		= binSolid(1,2,3,	TopStyle.INT_DIV_MAG, 	BottomStyle.MAGNET_SCREW).translate((gridUnit, gridUnit*0.5, 0))
-		test_1x1x6		= binSolid(1,1,6,	TopStyle.INT_DIV, 		BottomStyle.NONE).translate((0, gridUnit, 0))
-		test_1x1x1H		= binSolid(1,1,1,	TopStyle.NONE, 			BottomStyle.SCREW_ONLY).translate((-gridUnit, gridUnit, 0))
-		test_1x1x1L		= binSolid(1,1,1,	TopStyle.NONE_LOW, 		BottomStyle.MAGNET_ONLY, 2, 2).translate((-gridUnit, 0, 0))
-		test_1x1x1B		= binSolid(1,1,1,	TopStyle.STACKING, 		BottomStyle.BLANK).translate((-gridUnit, -gridUnit, 0))
-	if flagTestSubDiv:
-		test_15x1x1		= binSolid(1.5,1,1,	TopStyle.INT_DIV_MAG,	BottomStyle.MAGNET_SCREW).translate((-gridUnit*1.5/2, -gridUnit, 0))
-		test_166x1x1	= binSolid(1.66,1,1,TopStyle.INT_DIV,		BottomStyle.NONE).translate((-gridUnit*1.33/2, gridUnit, 0))
-		test_1x1x1_2X	= binSolid(1,1,1, 	TopStyle.NONE,			BottomStyle.SCREW_ONLY, 2).translate((-gridUnit, 0, 0))
-		test_05x1x1_3X	= binSolid(0.5,1,1,	TopStyle.NONE_LOW,		BottomStyle.MAGNET_ONLY, 3).translate((gridUnit*0.5/2, -gridUnit, 0))
-		test_034x1x1	= binSolid(0.34,1,1,TopStyle.STACKING,		BottomStyle.BLANK).translate((gridUnit*0.66/2, gridUnit, 0))
-	if flagTestBin:
-		test_1x1x3_2D	= binCompartments(1, 1, 3, 2).translate((gridUnit, 0, 0))
-		test_1x1x6_2D	= binCompartments(1, 1, 6, 1, 2, tabStyle=TabStyle.NONE).translate((gridUnit*-1, 0, 0))
-		test_3x1x6_3D	= binCompartments(3, 1, 6, 3).translate((0, gridUnit, 0))
-		test_2x1x3_42D	= binCompartments(2, 1, 3, 4, 2, tabStyle=TabStyle.NONE).translate((-gridUnit/2, -gridUnit, 0))
-	if flagTestClearWindow:
-		test_1x1x1_ClrT	= trayClearWindow(1, 1, 1).translate((gridUnit, 0, 0))
-		test_2x1x1_ClrT	= trayClearWindow(2, 1, 1).translate((gridUnit/2, gridUnit, 0))
-		test_1x2x3_ClrY = binClearWindow(1, 2, 3, 1, 2, clearSide="Y").translate((-gridUnit, gridUnit/2, 0))
-		test_2x1x3_ClrX = binClearWindow(2, 1, 3, 3, 1, 1).translate((-gridUnit*0.5, -gridUnit, 0))
-	if flagTestAngle:
-		test_1x1x3_Angle= trayAngleAdaptor().translate((gridUnit,-gridUnit,0))
-		test_1x1x9_Angle= trayAngleAdaptor(1, 1, binHeight=9).translate((-gridUnit, -gridUnit, 0))
-		test_1x1x6_Angle= trayAngleAdaptor(1, 1, binHeight=6).translate((0, -gridUnit, 0))
-		test_2x2x6_Angle= trayAngleAdaptor(2, 2, binHeight=6, bottomDivX=2, bottomDivY=2).translate((gridUnit*0.25, gridUnit*0.5, 0))
-
-bZ = 3
-#b1 = binCompartments(4,1,bZ,4,1,3,bottomDivX=2, bottomDivY=2).translate((-gridUnit/2,-gridUnit, 0))
-#b2 = b1.translate((0,-gridUnit,0))
-#b3 = binCompartments(4,2,bZ,4,2,3,bottomDivX=2, bottomDivY=2).translate((-gridUnit/2,-gridUnit*3.5, 0))
-b4 = binCompartments(2,2,bZ,2,2,3,bottomDivX=2, bottomDivY=2).translate((gridUnit/2, -gridUnit*5.5, 0))
-b5 = b4.translate((-gridUnit*2, 0, 0))
