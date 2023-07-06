@@ -10,6 +10,19 @@ def crossSection(
 		sectionY: float	= 0,
 		type			= CrossSection.QUADRANT,
 	):
+	"""
+	Cuts the supplied object to display a cross-section view.
+
+	:param item: The item to be cut
+	:param sectionX: X translation to apply to the cutter
+	:param sectionY: Y translation to apply to the cutter
+	:param type: Which cutter to use
+	:type type: CrossSection.(QUADRANT|HALF|HALFX|HALFY)
+
+	:return: The item, cut as specified
+	"""
+	if (item is None):
+		return None
 	maxDist = item.largestDimension()
 	sectionCutter = (
 		cq.Workplane("XY")
@@ -45,6 +58,16 @@ def roundedRect(
 		radius		= 2,
 		inObject	= cq.Workplane("XY"),
 		):
+	"""
+	Draws a rounded rectangle on the supplied workplane, or one a default XY workplane if none is supplied
+
+	:param xLength: Length in the X direction
+	:param yLength: Length in the Y direction
+	:param radius: Radius of the fillet
+	:param inObject: The workplane to add the rounded rectangle to
+
+	:return: A rounded rectangle on the workplane
+	"""
 	xL = (xLength/2 - radius)
 	yL = (yLength/2 - radius)
 	returnVal = (
@@ -72,10 +95,21 @@ def baseplate (
 
 		roundTop	= False,
 		):
+	"""
+	Generate a gridfinity baseplate of plateX * plateY
+
+	:param plateX: X dimension of the baseplate, in gridfinity units. Rounds up to the next int.
+	:param plateY: Y dimension of the baseplate, in gridfinity units. Rounds up to the next int.
+	:param plateZ: Z height of the baseplate, in mm. If this is None (default), then it will automatically calculate the minimum for the specified base style
+	:param plateStyle: Style of the baseplate - PlateStyle.(BARE|MAGNET_ONLY|SCREW_ONLY|MAGNET_SCREW)
+	:param roundTop: Whether to round the top edges
+
+	:return: A gridfinity baseplate of the specified size
+	"""
 	if (plateX <= 0):
-		raise Exception("plateX cannot be less than 0")
+		raise ValueError("plateX cannot be less than 0")
 	if (plateY <= 0):
-		raise Exception("plateY cannot be less than 0")
+		raise ValueError("plateY cannot be less than 0")
 	if (plateZ is None):
 		plateZ = outsideDepth
 		if (plateStyle is not PlateStyle.BARE):
